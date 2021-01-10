@@ -74,7 +74,7 @@ class SSOFC(QtGui.QWidget):
         # self.setGeometry(0, 0, 1000, 800)
         self.setWindowTitle(u'可逆固体氧化物电池综合能源系统测试平台')
         self.resize(1000,800)
-        self.setWindowIcon(QtGui.QIcon('D:\labview\电子负载\icon2.ico'))
+        self.setWindowIcon(QtGui.QIcon('.\icon2.ico'))
         self.show()
     def closeEvent(self,event):
         ser.close()#关闭端口
@@ -264,14 +264,14 @@ class SliderCurrent(QtGui.QWidget):
         data_i=np.empty(0)
         data_v=np.empty(0)
         for i in range(step+1): 
-            set_load_current(current_step*i)          
+            set_load_current(current_step*i)
+            time.sleep(time_step)           
             voltage,current,power=read_vcp()
             data_i=np.append(data_i,current)
             data_v=np.append(data_v,voltage)
             p_iv.setRange(xRange=[min(data_i),max(data_i)],yRange=[min(data_v)*0.95,max(data_v)*1.05],padding=0)
             curve_iv.setData(data_v,x=data_i)
             self.pbar.setValue(int(i*(100/step)))
-            time.sleep(time_step) 
     def test_iv(self):
         step=int(self.qle_step.text())
         time_step=float(self.qle_time_step.text())
