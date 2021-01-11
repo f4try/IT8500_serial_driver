@@ -7,8 +7,13 @@ import numpy as np
 import threading
 from pyqtgraph.Qt import QtGui,QtCore,QtWidgets
 import sys
+import pyvisa
+import os
 busy=False
 rate=5
+# mode=True # 电池模式
+if not os.path.exists("./output"):
+    os.mkdir("./output")
 def crc(data:str)->str:
     nums=data.split(" ")
     ret=0
@@ -74,7 +79,7 @@ class SSOFC(QtGui.QWidget):
         # self.setGeometry(0, 0, 1000, 800)
         self.setWindowTitle(u'可逆固体氧化物电池综合能源系统测试平台')
         self.resize(1000,800)
-        self.setWindowIcon(QtGui.QIcon('.\icon2.ico'))
+        self.setWindowIcon(QtGui.QIcon('./icon2.ico'))
         self.show()
     def closeEvent(self,event):
         ser.close()#关闭端口
@@ -84,8 +89,8 @@ class PaintVCP(QtGui.QWidget):
     def __init__(self):
         super().__init__()
         self.max_power = 200.
+        self.psw=None
         self.initUI()
-
     def initUI(self):
         self.text = "初始化"
         # self.setGeometry(300, 300, 350, 300)
@@ -98,7 +103,7 @@ class PaintVCP(QtGui.QWidget):
         if self.isFcMode:
             vcp="电池模式\n\n功率: {:.3f} W\n电压: {:.3f} V\n电流: {:.4f} A\n".format(power,voltage,current)
         else:
-            hydrogen=current/26.801/2.*23.8
+            hydrogen=abs(current/26.801/2.*23.8)
             vcp="电解模式\n\n产氢率: {:.3f} NL/h\n电压: {:.3f} V\n电流: {:.4f} A\n".format(hydrogen,voltage,current)
         self.text=vcp
         self.power_percent=power/max(self.max_power,0.1)
@@ -133,6 +138,7 @@ class PaintVCP(QtGui.QWidget):
         qp.drawArc(shape,210*16,-int(self.power_percent*240*16))
     def setMode(self):
         self.isFcMode=not self.isFcMode
+        global mode
         if self.isFcMode:
             self.btn_text='切换到电解模式'
             p_power.setLabel(axis='left',text='''<font face='微软雅黑' size=6>功率 (W)</font>''')
@@ -141,7 +147,11 @@ class PaintVCP(QtGui.QWidget):
             self.btn_text='切换到电池模式'
             p_power.setLabel(axis='left',text='''<font face='微软雅黑' size=6>产氢率 (NL/h)</font>''')
             p_power.setTitle('''<font color=red face='微软雅黑' size=6>产氢率</font>''')
-        btn_mode.setText(self.btn_text)
+            set_load_current(0.)
+            slider_current.s1.setValue(0)
+            rm=pyvisa.ResourceManager()
+            self.psw = rm.open_resource('ASRL3::INSTR')#串口
+        setting.btn_mode.setText(self.btn_text)
 
 class SliderCurrent(QtGui.QWidget):
     def __init__(self,parent=None):
@@ -201,7 +211,7 @@ class SliderCurrent(QtGui.QWidget):
         self.qle_step.setFont(QtGui.QFont('微软雅黑',18))
         self.qle_step.setAlignment(QtCore.Qt.AlignCenter)
         # self.qle.setPlaceholderText('输入负载电流值')
-        self.qle_step.setText('20')
+        self.qle_step.setText('8')
         # self.qle.insert('0.0000')
         layout.addWidget(self.qle_step)
 
@@ -259,19 +269,42 @@ class SliderCurrent(QtGui.QWidget):
         self.s1.setValue(int(current*10000))
         set_load_current(current)
     def test_iv_thread(self,step,time_step):
-        current_max = self.s1.value()/10000. 
+        # current_max = self.s1.value()/10000. 
+        current_max = float(self.qle_current.text())
         current_step = current_max/step
+        time_str=time.strftime("%Y-%m-%d_%H点%M分%S秒", time.localtime())
+        f = open("./output/output_iv_"+time_str+".csv", "a")
+        f.write("time,voltage,current,power,hydrogen,mode\n")
         data_i=np.empty(0)
         data_v=np.empty(0)
+        data_p=np.empty(0)
         for i in range(step+1): 
+            voltage,current,power=0,0,0
+            hydrogen=0
+            mode ="FC"
             set_load_current(current_step*i)
-            time.sleep(time_step)           
-            voltage,current,power=read_vcp()
+            if i==0:
+                time.sleep(2)
+            time.sleep(time_step)
+            if paintVCP.isFcMode:
+                voltage,current,power=read_vcp()
+            else:          
+                voltage = pws_read_voltage(paintVCP.psw)
+                current = -pws_read_current(paintVCP.psw)
+                power = voltage*current
+                hydrogen=abs(current/26.801/2.*23.8)
+                mode="EC"
+            delta_time = time_step*i
+            output="{:.3f},{:.3f},{:.4f},{:.3f},{:.3f},{}\n".format(delta_time,voltage,current,power,hydrogen,mode)
+            f.write(output)
             data_i=np.append(data_i,current)
             data_v=np.append(data_v,voltage)
+            data_p=np.append(data_p,power)
             p_iv.setRange(xRange=[min(data_i),max(data_i)],yRange=[min(data_v)*0.95,max(data_v)*1.05],padding=0)
             curve_iv.setData(data_v,x=data_i)
+            curve_ip.setData(data_p,x=data_i)
             self.pbar.setValue(int(i*(100/step)))
+
     def test_iv(self):
         step=int(self.qle_step.text())
         time_step=float(self.qle_time_step.text())
@@ -302,7 +335,7 @@ class Setting(QtGui.QWidget):
         self.qle_power.setFont(QtGui.QFont('微软雅黑',18))
         self.qle_power.setAlignment(QtCore.Qt.AlignCenter)
         # self.qle.setPlaceholderText('输入负载电流值')
-        self.qle_power.setText('200.0')
+        self.qle_power.setText('150.0')
         # self.qle.insert('0.0000')
         self.qle_power.textChanged[str].connect(self.onChanged_power)
         layout.addWidget(self.qle_power)
@@ -339,8 +372,8 @@ title.setAlignment(QtCore.Qt.AlignCenter)
 setting = Setting()
 
 # btn_mode.setCheckable(True)
-text = QtGui.QLineEdit('enter text')
-listw = QtGui.QListWidget()
+# text = QtGui.QLineEdit('enter text')
+# listw = QtGui.QListWidget()
 # lcd_voltage=QtWidgets.QLCDNumber(7)
 # lcd_current=QtWidgets.QLCDNumber(7)
 # lcd_power=QtWidgets.QLCDNumber(7)
@@ -348,14 +381,15 @@ slider_current=SliderCurrent()
 p_voltage = pg.PlotWidget()
 p_current = pg.PlotWidget()
 p_power = pg.PlotWidget()
-p_iv = pg.PlotWidget()
+# p_iv_widget = pg.PlotWidget()
+p_ivp=pg.GraphicsView()
 layout = QtGui.QGridLayout()
 w.setLayout(layout)
 layout.addWidget(title, 0, 0,1,3)   # button goes in upper-left
 layout.addWidget(setting,1,0,1,1)
 layout.addWidget(paintVCP,2,0,2,1)
 layout.addWidget(slider_current, 1, 1, 3, 1)
-layout.addWidget(p_iv, 1, 2, 3, 1)
+layout.addWidget(p_ivp, 1, 2, 3, 1)
 # layout.addWidget(lcd_voltage, 1, 0)   # button goes in upper-left
 # layout.addWidget(lcd_current, 2, 0)   # text edit goes in middle-left
 # layout.addWidget(lcd_power, 3, 0)  # list widget goes in bottom-left
@@ -364,32 +398,56 @@ layout.addWidget(p_voltage, 4, 1, 3, 1)  # plot goes on right side, spanning 3 r
 layout.addWidget(p_current, 4, 2, 3, 1)  # plot goes on right side, spanning 3 rows
 
 data_voltage=np.empty(0)
+data_voltage_psw=np.empty(0)
 p_voltage.showGrid(x=True,y=True)
-p_voltage.setLabel(axis='left',text='''<font face='微软雅黑' size=6>电压 (V)</font>''')
+p_voltage.setLabel(axis='left',text='''<font face='微软雅黑' size=6>电压 (V)</font>''',color="#00FF00")
 p_voltage.setLabel(axis='bottom',text='''<font face='微软雅黑' size=6>时间 (s)</font>''')
 p_voltage.setTitle('''<font color=red face='微软雅黑' size=6>电压</font>''')
-curve_voltage=p_voltage.plot()
+curve_voltage=p_voltage.plot(pen='#00FF00')
 
 data_current=np.empty(0)
+data_current_psw=np.empty(0)
 p_current.showGrid(x=True,y=True)
-p_current.setLabel(axis='left',text='''<font face='微软雅黑' size=6>电流 (A)</font>''')
+p_current.setLabel(axis='left',text='''<font face='微软雅黑' size=6>电流 (A)</font>''',color="#00FF00")
 p_current.setLabel(axis='bottom',text='''<font face='微软雅黑' size=6>时间 (s)</font>''')
 p_current.setTitle('''<font color=red face='微软雅黑' size=6>电流</font>''')
-curve_current=p_current.plot()
+curve_current=p_current.plot(pen='#00FF00')
 
 data_power=np.empty(0)
 data_hydrogen=np.empty(0)
 p_power.showGrid(x=True,y=True)
-p_power.setLabel(axis='left',text='''<font face='微软雅黑' size=6>功率 (W)</font>''')
+p_power.setLabel(axis='left',text='''<font face='微软雅黑' size=6>功率 (W)</font>''',color="#00FF00")
 p_power.setLabel(axis='bottom',text='''<font face='微软雅黑' size=6>时间 (s)</font>''')
 p_power.setTitle('''<font color=red face='微软雅黑' size=6>功率</font>''')
-curve_power=p_power.plot()
+curve_power=p_power.plot(pen='#00FF00')
 
+p_iv=pg.PlotItem()
 p_iv.showGrid(x=True,y=True)
-p_iv.setLabel(axis='left',text='''<font face='微软雅黑' size=6>电压 (V)</font>''')
+p_iv.setLabel(axis='left',text='''<font face='微软雅黑' size=6>电压 (V)</font>''',color="#00FF00")
 p_iv.setLabel(axis='bottom',text='''<font face='微软雅黑' size=6>电流 (A)</font>''')
-p_iv.setTitle('''<font color=red face='微软雅黑' size=6>IV曲线</font>''')
-curve_iv=p_iv.plot()
+# p_iv.setTitle('''<font color=red face='微软雅黑' size=6>IVP曲线</font>''')
+curve_iv=p_iv.plot(pen='#00FF00')
+a_power = pg.AxisItem("right")
+v_power = pg.ViewBox()
+
+l = pg.GraphicsLayout()
+# 设置视图中心小部件 为该布局
+p_ivp.setCentralWidget(l)
+# l.addItem(curve_power)
+l.addItem(p_iv, row = 2, col = 3,  rowspan=1, colspan=1)
+l.addItem(a_power, row = 2, col = 5,  rowspan=1, colspan=1)
+l.scene().addItem(v_power)
+a_power.linkToView(v_power)
+v_voltage = p_iv.vb
+v_power.setXLink(v_voltage)
+# p_iv.getAxis("left").setLabel('电流', color='#FFFFFF')
+a_power.setLabel(axis='right',text='''<font face='微软雅黑' size=6>功率 (W)</font>''',color="#FF0000")
+# v_power.setTitle('''<font color=red face='微软雅黑' size=6></font>''')
+v_power.setGeometry(v_voltage.sceneBoundingRect())
+# v_voltage.addItem(pg.PlotCurveItem(x, y1, pen='#FFFFFF'))
+# a_power.setLabel(axis='bottom',text='''<font face='微软雅黑' size=6>电流 (A)</font>''')
+curve_ip=pg.PlotCurveItem(pen='#FF0000')
+v_power.addItem(curve_ip)
 # font = QtGui.QFont()
 # font.setPixelSize(20)
 # p_voltage.getAxis("bottom").tickFont = font
@@ -403,19 +461,31 @@ def serialProcess(data_voltage,data_current,data_power,data_hydrogen,p_power):
         remote_switch(False)
         load_switch(True)
         start_time=time.time()
-        f = open("D:\labview\电子负载\output.csv", "a")
-        f.write("time,voltage,current,power\n")
+        time_str=time.strftime("%Y-%m-%d_%H点%M分%S秒", time.localtime())
+        f = open("./output/output_"+time_str+".csv", "a")
+        f.write("time,voltage,current,power,hydrogen,mode\n")
         i=0
         times=np.array([])
         global rate
         while ser.isOpen():
             # read vcp
-            voltage,current,power=read_vcp()
             # if voltage==-1 and current==-1 and power==-1:
             #     continue
+            voltage,current,power = 0,0,0
+            mode=""
+            hydrogen=0
+            if paintVCP.isFcMode:
+                voltage,current,power=read_vcp()
+                mode="FC"
+            else:
+                voltage = pws_read_voltage(paintVCP.psw)
+                current = -pws_read_current(paintVCP.psw)
+                power = voltage*current
+                mode="EC"
+                hydrogen=abs(current/26.801/2.*23.8)
             delta_time =time.time()-start_time
             times=np.append(times,delta_time)
-            output="{:.3f},{:.3f},{:.4f},{:.3f}\n".format(delta_time,voltage,current,power)
+            output="{:.3f},{:.3f},{:.4f},{:.3f},{:.3f},{}\n".format(delta_time,voltage,current,power,hydrogen,mode)
             f.write(output)
             paintVCP.updateVCP(voltage,current,power)
             # slider_current.value_write(current)
@@ -456,6 +526,13 @@ def serialProcess(data_voltage,data_current,data_power,data_hydrogen,p_power):
             # print(times[-1])
             time_step = 1./max(rate,1)
             time.sleep(time_step)
+def pws_read_voltage(psw)->float:
+    return float(psw.query("meas:volt:dc?"))
+def pws_read_current(psw)->float:
+    return float(psw.query("meas:curr:dc?"))
+def pws_set_voltage(psw,voltage:float):
+    return float(psw.query("SOUR:VOLT:LEV:IMM:AMPL "+"{:.2f}".format(voltage)))
+       
 portx="COM6"
 bps=9600
 # timex=5
@@ -464,6 +541,8 @@ ser = serial.Serial(portx, int(bps), timeout=1, parity=serial.PARITY_NONE,stopbi
 # set_load_current(0.3)
 th1 = threading.Thread(target=serialProcess,args=(data_voltage,data_current,data_power,data_hydrogen,p_power))
 th1.start()
+
+# psw.baud_rate = 9600
 # timer = pg.QtCore.QTimer()
 # timer.timeout.connect(plotData,args=(data,)) # 定时刷新数据显示
 # timer.start(500) # 多少ms调用一次
