@@ -137,12 +137,14 @@ class PaintVCP(QtGui.QWidget):
         qp.setPen(pen)
         qp.drawArc(shape,210*16,-int(self.power_percent*240*16))
     def setMode(self):
-        self.isFcMode=not self.isFcMode
-        global mode
-        if self.isFcMode:
+        if not self.isFcMode:
             self.btn_text='切换到电解模式'
             p_power.setLabel(axis='left',text='''<font face='微软雅黑' size=6>功率 (W)</font>''')
             p_power.setTitle('''<font color=red face='微软雅黑' size=6>功率</font>''')
+            slider_current.text_current="负载电流 (A):"
+            slider_current.l1.setText(slider_current.text_current)
+            slider_current.qle_step.setText('50')
+            slider_current.qle_time_step.setText('0.5')
         else:
             self.btn_text='切换到电池模式'
             p_power.setLabel(axis='left',text='''<font face='微软雅黑' size=6>产氢率 (NL/h)</font>''')
@@ -151,6 +153,11 @@ class PaintVCP(QtGui.QWidget):
             slider_current.s1.setValue(0)
             rm=pyvisa.ResourceManager()
             self.psw = rm.open_resource('ASRL3::INSTR')#串口
+            slider_current.text_current="电源电压 (V):"
+            slider_current.l1.setText(slider_current.text_current)
+            slider_current.qle_step.setText('25')
+            slider_current.qle_time_step.setText('1.0')
+        self.isFcMode=not self.isFcMode
         setting.btn_mode.setText(self.btn_text)
 
 class SliderCurrent(QtGui.QWidget):
@@ -211,7 +218,7 @@ class SliderCurrent(QtGui.QWidget):
         self.qle_step.setFont(QtGui.QFont('微软雅黑',18))
         self.qle_step.setAlignment(QtCore.Qt.AlignCenter)
         # self.qle.setPlaceholderText('输入负载电流值')
-        self.qle_step.setText('8')
+        self.qle_step.setText('50')
         # self.qle.insert('0.0000')
         layout.addWidget(self.qle_step)
 
@@ -265,9 +272,12 @@ class SliderCurrent(QtGui.QWidget):
     #     self.last = current
     def set_current(self):
         # current = self.s1.value()/10000.
-        current = float(self.qle_current.text())
-        self.s1.setValue(int(current*10000))
-        set_load_current(current)
+        value = float(self.qle_current.text())
+        self.s1.setValue(int(value*10000))
+        if paintVCP.isFcMode:
+            set_load_current(value)
+        else:
+            pws_set_voltage(paintVCP.psw,value)
     def test_iv_thread(self,step,time_step):
         # current_max = self.s1.value()/10000. 
         current_max = float(self.qle_current.text())
@@ -282,7 +292,10 @@ class SliderCurrent(QtGui.QWidget):
             voltage,current,power=0,0,0
             hydrogen=0
             mode ="FC"
-            set_load_current(current_step*i)
+            if paintVCP.isFcMode:
+                set_load_current(current_step*i)
+            else:
+                pws_set_voltage(paintVCP.psw,current_step*i)
             if i==0:
                 time.sleep(2)
             time.sleep(time_step)
@@ -531,7 +544,7 @@ def pws_read_voltage(psw)->float:
 def pws_read_current(psw)->float:
     return float(psw.query("meas:curr:dc?"))
 def pws_set_voltage(psw,voltage:float):
-    return float(psw.query("SOUR:VOLT:LEV:IMM:AMPL "+"{:.2f}".format(voltage)))
+    psw.write("SOUR:VOLT:LEV:IMM:AMPL "+"{:.2f}".format(voltage))
        
 portx="COM6"
 bps=9600
