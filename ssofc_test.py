@@ -145,6 +145,7 @@ class PaintVCP(QtGui.QWidget):
             slider_current.l1.setText(slider_current.text_current)
             slider_current.qle_step.setText('50')
             slider_current.qle_time_step.setText('0.5')
+            slider_current.l_limit.setText('IV测试起始电流 (A):')
         else:
             self.btn_text='切换到电池模式'
             p_power.setLabel(axis='left',text='''<font face='微软雅黑' size=6>产氢率 (NL/h)</font>''')
@@ -155,8 +156,10 @@ class PaintVCP(QtGui.QWidget):
             self.psw = rm.open_resource('ASRL3::INSTR')#串口
             slider_current.text_current="电源电压 (V):"
             slider_current.l1.setText(slider_current.text_current)
-            slider_current.qle_step.setText('25')
+            slider_current.qle_step.setText('50')
             slider_current.qle_time_step.setText('1.0')
+            slider_current.l_limit.setText('IV测试起始电压 (V):')
+
         self.isFcMode=not self.isFcMode
         setting.btn_mode.setText(self.btn_text)
 
@@ -177,6 +180,7 @@ class SliderCurrent(QtGui.QWidget):
         self.qle_current.setText('0.0000')
         # self.qle.insert('0.0000')
         layout.addWidget(self.qle_current)
+
 
         #创建水平方向滑动条
         self.s1=QtGui.QSlider(QtCore.Qt.Horizontal)
@@ -207,6 +211,20 @@ class SliderCurrent(QtGui.QWidget):
         self.btn_current.setFont(font)
         # self.btn.move(40, 80)
         layout.addWidget(self.btn_current)
+
+
+        self.text_limit="IV测试起始电流 (A):"
+        self.l_limit=QtGui.QLabel(self.text_limit)
+        self.l_limit.setFont(QtGui.QFont('微软雅黑',18))
+        self.l_limit.setAlignment(QtCore.Qt.AlignCenter)
+        layout.addWidget(self.l_limit)
+
+        self.qle_limit = QtGui.QLineEdit(self)
+        self.qle_limit.setFont(QtGui.QFont('微软雅黑',18))
+        self.qle_limit.setAlignment(QtCore.Qt.AlignCenter)
+        self.qle_limit.setText('0.0000')
+        self.qle_limit.textChanged[str].connect(self.onChanged_limit)
+        layout.addWidget(self.qle_limit)
 
         self.text_step="时间步数 :"
         self.l_step=QtGui.QLabel(self.text_step)
@@ -280,8 +298,9 @@ class SliderCurrent(QtGui.QWidget):
             pws_set_voltage(paintVCP.psw,value)
     def test_iv_thread(self,step,time_step):
         # current_max = self.s1.value()/10000. 
+        current_limit = float(self.qle_limit.text())
         current_max = float(self.qle_current.text())
-        current_step = current_max/step
+        current_step = (current_max-current_limit)/step
         time_str=time.strftime("%Y-%m-%d_%H点%M分%S秒", time.localtime())
         f = open("./output/output_iv_"+time_str+".csv", "a")
         f.write("time,voltage,current,power,hydrogen,mode\n")
@@ -293,9 +312,9 @@ class SliderCurrent(QtGui.QWidget):
             hydrogen=0
             mode ="FC"
             if paintVCP.isFcMode:
-                set_load_current(current_step*i)
+                set_load_current(current_limit+current_step*i)
             else:
-                pws_set_voltage(paintVCP.psw,current_step*i)
+                pws_set_voltage(paintVCP.psw,current_limit+current_step*i)
             if i==0:
                 time.sleep(2)
             time.sleep(time_step)
@@ -324,6 +343,8 @@ class SliderCurrent(QtGui.QWidget):
         self.pbar.setValue(0)
         th2 = threading.Thread(target=self.test_iv_thread,args=(step,time_step))
         th2.start()
+    def onChanged_limit(self):
+        self.s1.setMinimum(int(float(self.qle_limit.text())*10000))
 class Setting(QtGui.QWidget):
     def __init__(self,parent=None):
         super(Setting, self).__init__(parent)
