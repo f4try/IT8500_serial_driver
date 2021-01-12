@@ -1,1 +1,1 @@
-pyinstaller -F -w -i .\icon2.ico .\ssofc_test.py
+pyinstaller -F -w -i .\icon2.ico .\rsoc_test.py
