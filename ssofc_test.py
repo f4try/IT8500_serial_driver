@@ -397,9 +397,10 @@ class DynamicTest(QtGui.QWidget):
         layout.addWidget(self.cb_reverse)
 
         self.combo = QtGui.QComboBox(self)
-        self.combo.addItem('稳定性测试')
         self.combo.addItem('对照测试')
         self.combo.addItem('连续测试')
+        self.combo.addItem('稳定性测试')
+        
         self.combo.setFont(QtGui.QFont('微软雅黑',13))
         layout.addWidget(self.combo)
 
