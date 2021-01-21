@@ -101,7 +101,7 @@ class PaintVCP(QtGui.QWidget):
         super().__init__()
         self.max_power = 200.
         rm=pyvisa.ResourceManager()
-        self.psw = rm.open_resource('ASRL3::INSTR')#串口
+        self.psw = rm.open_resource('ASRL7::INSTR')#串口
         pws_output_on(self.psw,False)
         # self.psw=None
         self.initUI()
@@ -495,10 +495,10 @@ class DynamicTest(QtGui.QWidget):
                 # else:
                 #     pws_set_voltage(paintVCP.psw,float(self.tw.item(i,1).text()))
                 if self.tw.item(i,1).text()=='OFF':
-                    # pws_output_on(paintVCP.psw,False)
+                    pws_output_on(paintVCP.psw,False)
                     paintVCP.isFcMode = True
                 else:
-                    # pws_output_on(paintVCP.psw,True)
+                    pws_output_on(paintVCP.psw,True)
                     paintVCP.isFcModes = False
                     pws_set_voltage(paintVCP.psw,float(self.tw.item(i,1).text()))
                 # print(self.tw.item(i,2).text())
