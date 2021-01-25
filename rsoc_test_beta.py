@@ -69,6 +69,7 @@ def set_load_current(current:float):
     input_data='AA 00 2A '+hex_current+'00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00'
     query(ser,input_data)
     # remote_switch(False)
+
 def pws_read_voltage(psw)->float:
     return float(psw.query("meas:volt:dc?"))
 def pws_read_current(psw)->float:
@@ -81,6 +82,7 @@ def pws_output_on(psw,on:bool):
     else:
         psw.write("OUTP:TRIG 0")
     psw.write("INIT:NAME OUTP")
+
 class SSOFC(QtGui.QWidget):
     def __init__(self):
         super().__init__()
@@ -98,7 +100,10 @@ class PaintVCP(QtGui.QWidget):
     def __init__(self):
         super().__init__()
         self.max_power = 200.
-        self.psw=None
+        rm=pyvisa.ResourceManager()
+        self.psw = rm.open_resource('ASRL3::INSTR')#串口
+        pws_output_on(self.psw,False)
+        # self.psw=None
         self.initUI()
     def initUI(self):
         self.text = "初始化"
@@ -143,30 +148,26 @@ class PaintVCP(QtGui.QWidget):
         pen.setWidth(10) 
         pen.setCapStyle(QtCore.Qt.RoundCap)
         qp.setPen(pen)
-        if paintVCP.isFcMode:
-            qp.drawArc(shape,210*16,-int(self.power_percent*240*16))
-        else:
-            qp.drawArc(shape,210*16,-int(0*240*16))
+        qp.drawArc(shape,210*16,-int(self.power_percent*240*16))
     def setMode(self):
         if not self.isFcMode:
             self.btn_text='切换到电解模式'
             p_power.setLabel(axis='left',text='''<font face='微软雅黑' size=6>功率 (W)</font>''')
             p_power.setTitle('''<font color=red face='微软雅黑' size=6>功率</font>''')
-            a_power.setLabel(axis='right',text='''<font face='微软雅黑' size=6>功率 (W)</font>''',color="#FF0000")
             slider_current.text_current="负载电流 (A):"
             slider_current.l1.setText(slider_current.text_current)
             slider_current.qle_step.setText('50')
             slider_current.qle_time_step.setText('0.5')
-            slider_current.l_limit.setText('测试起始电流 (A):')           
+            slider_current.l_limit.setText('测试起始电流 (A):')
+            pws_output_on(self.psw,False)
         else:
             self.btn_text='切换到电池模式'
             p_power.setLabel(axis='left',text='''<font face='微软雅黑' size=6>产氢率 (NL/h)</font>''')
             p_power.setTitle('''<font color=red face='微软雅黑' size=6>产氢率</font>''')
-            a_power.setLabel(axis='right',text='''<font face='微软雅黑' size=6></font>''',color="#FF0000")
             set_load_current(0.)
             slider_current.s1.setValue(0)
-            rm=pyvisa.ResourceManager()
-            self.psw = rm.open_resource('ASRL3::INSTR')#串口
+            # rm=pyvisa.ResourceManager()
+            # self.psw = rm.open_resource('ASRL3::INSTR')#串口
             slider_current.text_current="电源电压 (V):"
             slider_current.l1.setText(slider_current.text_current)
             slider_current.qle_step.setText('50')
@@ -321,6 +322,7 @@ class SliderCurrent(QtGui.QWidget):
             if i==0:
                 time.sleep(2)
             time.sleep(time_step)
+            # voltage = pws_read_voltage(paintVCP.psw)
             if paintVCP.isFcMode:
                 voltage,current,power=read_vcp()
             else:          
@@ -337,8 +339,7 @@ class SliderCurrent(QtGui.QWidget):
             data_p=np.append(data_p,power)
             p_iv.setRange(xRange=[min(data_i),max(data_i)],yRange=[min(data_v)*0.95,max(data_v)*1.05],padding=0)
             curve_iv.setData(data_v,x=data_i)
-            if paintVCP.isFcMode:
-                curve_ip.setData(data_p,x=data_i)
+            curve_ip.setData(data_p,x=data_i)
             self.pbar.setValue(int(i*(100/step)))
         f.close()
 
@@ -412,13 +413,19 @@ class DynamicTest(QtGui.QWidget):
 
         self.cb_reverse = QtGui.QCheckBox('反向测试', self)
         self.cb_reverse.setFont(QtGui.QFont('微软雅黑',15))
-        # self.cb_reverse.stateChanged.connect(self.changeTitle)
+        self.cb_reverse.stateChanged.connect(self.changeTitle)
         layout.addWidget(self.cb_reverse)
 
+        self.cb_modeswitch = QtGui.QCheckBox('模式切换', self)
+        self.cb_modeswitch.setFont(QtGui.QFont('微软雅黑',15))
+        self.cb_modeswitch.stateChanged.connect(self.changeTitle)
+        layout.addWidget(self.cb_modeswitch)
+
         self.combo = QtGui.QComboBox(self)
+        self.combo.addItem('稳定性测试')
         self.combo.addItem('对照测试')
         self.combo.addItem('连续测试')
-        self.combo.addItem('稳定性测试')
+        
         
         self.combo.setFont(QtGui.QFont('微软雅黑',13))
         layout.addWidget(self.combo)
@@ -433,10 +440,11 @@ class DynamicTest(QtGui.QWidget):
         setStyle(self.l_vector)
         layout.addWidget(self.l_vector)
 
-        self.tw=QtGui.QTableWidget(101,2)
-        self.tw.setHorizontalHeaderLabels(['时间 (s)','负载电流 (A)'])
+        self.tw=QtGui.QTableWidget(101,3)
+        self.tw.setHorizontalHeaderLabels(['t (s)','U (V)','I (A)'])
         self.tw.setColumnWidth(0,50)
-        self.tw.setColumnWidth(1,80)
+        self.tw.setColumnWidth(1,50)
+        self.tw.setColumnWidth(2,50)
         layout.addWidget(self.tw)
 
         self.btn_iv = QtGui.QPushButton('测试动态性能', self)
@@ -450,11 +458,21 @@ class DynamicTest(QtGui.QWidget):
         self.pbar.setAlignment(QtCore.Qt.AlignCenter)
 
         self.setLayout(layout)
-    # def changeTitle(self,state):
-    #     if state==QtCore.Qt.Checked:
-    #         print(111)
-    #     else:
-    #         print(222)
+    def changeTitle(self,state):
+        # if state==QtCore.Qt.Checked and not cb_reverse.isChecked():
+        if self.cb_modeswitch.isChecked() and not self.cb_reverse.isChecked():
+            slider_current.text_current="电源电压 (V):"
+            slider_current.l1.setText(slider_current.text_current)
+            slider_current.l_limit.setText('测试起始电流 (A):')
+        elif self.cb_modeswitch.isChecked() and self.cb_reverse.isChecked():
+            slider_current.text_current="负载电流 (A):"
+            slider_current.l1.setText(slider_current.text_current)
+            slider_current.l_limit.setText('测试起始电压 (V):')
+        else:
+            slider_current.text_current="负载电流 (A):"
+            slider_current.l1.setText(slider_current.text_current)
+            slider_current.l_limit.setText('测试起始电流 (A):')
+
 
     def test_tvi_thread(self):
         global times,data_voltage,data_current,data_power,data_hydrogen
@@ -472,10 +490,19 @@ class DynamicTest(QtGui.QWidget):
                 time.sleep(time_step)
                 continue
             else:
-                if paintVCP.isFcMode:
-                    set_load_current(float(self.tw.item(i,1).text()))
+                # if paintVCP.isFcMode:
+                #     set_load_current(float(self.tw.item(i,2).text()))
+                # else:
+                #     pws_set_voltage(paintVCP.psw,float(self.tw.item(i,1).text()))
+                if self.tw.item(i,1).text()=='OFF':
+                    pws_output_on(paintVCP.psw,False)
+                    paintVCP.isFcMode = True
                 else:
+                    pws_output_on(paintVCP.psw,True)
+                    paintVCP.isFcModes = False
                     pws_set_voltage(paintVCP.psw,float(self.tw.item(i,1).text()))
+                # print(self.tw.item(i,2).text())
+                set_load_current(float(self.tw.item(i,2).text()))
                 time.sleep(time_step)
                 i+=1
                 self.pbar.setValue(int(i*(100/step)))
@@ -506,6 +533,33 @@ class DynamicTest(QtGui.QWidget):
             data_limit = float(slider_current.qle_current.text())
             data_max = float(slider_current.qle_limit.text())
         n_step = int(slider_current.qle_step.text())
+        if paintVCP.isFcMode:
+            if self.cb_modeswitch.isChecked() and not self.cb_reverse.isChecked():
+                data_limit_type="i"
+                data_max_type="v"
+                voltage_limit=data_voltage[-1]
+                voltage_max=data_max
+                current_limit=0
+                current_max=data_limit
+            elif self.cb_modeswitch.isChecked() and self.cb_reverse.isChecked():
+                data_limit_type="v"
+                data_max_type="i"
+                voltage_limit=data_voltage[-1]
+                voltage_max=data_limit
+                current_limit=0
+                current_max=data_max
+            else:
+                data_limit_type="i"
+                data_max_type="i"
+                voltage_limit=data_voltage[-1]
+                voltage_max=data_voltage[-1]
+                current_limit=data_limit
+                current_max=data_max
+            voltage_step = (voltage_max-voltage_limit)/n_step
+            current_step = (current_max-current_limit)/n_step
+        else:
+            data_limit_type="v"
+            data_max_type="v"
         data_step = (data_max-data_limit)/n_step
         time_step = float(slider_current.qle_time_step.text())
         if self.combo.currentText()=='连续测试':
@@ -523,32 +577,112 @@ class DynamicTest(QtGui.QWidget):
         if self.combo.currentText()=='连续测试':
             for i in range(n_step+1):
                 self.tw.setItem(i,0,QtGui.QTableWidgetItem("{:.3f}".format(i*time_step)))
-                self.tw.setItem(i,1,QtGui.QTableWidgetItem("{:.4f}".format(data_limit+i*data_step)))
+                if data_limit_type=='v' and data_max_type=='i':
+                    self.tw.setItem(i,1,QtGui.QTableWidgetItem("{:.4f}".format(voltage_max-i*voltage_step)))
+                    self.tw.setItem(i,2,QtGui.QTableWidgetItem("0.0000"))
+                elif data_limit_type=='i' and data_max_type=='v':
+                    self.tw.setItem(i,1,QtGui.QTableWidgetItem("OFF"))
+                    self.tw.setItem(i,2,QtGui.QTableWidgetItem("{:.4f}".format(current_max-i*current_step)))
+                elif data_limit_type=='i' and data_max_type=='i':
+                    self.tw.setItem(i,1,QtGui.QTableWidgetItem("OFF"))
+                    self.tw.setItem(i,2,QtGui.QTableWidgetItem("{:.4f}".format(data_limit+i*data_step)))
+                elif data_limit_type=='v' and data_max_type=='v':
+                    self.tw.setItem(i,1,QtGui.QTableWidgetItem("{:.4f}".format(data_limit+i*data_step)))
+                    self.tw.setItem(i,2,QtGui.QTableWidgetItem("0.0000"))
             if self.cb.isChecked():
                 for i in range(n_step+1):
                     self.tw.setItem(n_step+1+i,0,QtGui.QTableWidgetItem("{:.3f}".format((n_step+1)*time_step+i*time_step)))
-                    self.tw.setItem(n_step+1+i,1,QtGui.QTableWidgetItem("{:.4f}".format(data_max-(i+1)*data_step)))
+                    if data_limit_type=='v' and data_max_type=='i':
+                        self.tw.setItem(n_step+1+i,1,QtGui.QTableWidgetItem("OFF"))
+                        self.tw.setItem(n_step+1+i,2,QtGui.QTableWidgetItem("{:.4f}".format(current_limit+i*current_step)))  
+                    elif data_limit_type=='i' and data_max_type=='v':
+                        self.tw.setItem(n_step+1+i,1,QtGui.QTableWidgetItem("{:.4f}".format(voltage_limit+i*voltage_step)))
+                        self.tw.setItem(n_step+1+i,2,QtGui.QTableWidgetItem("0.0000"))
+                    elif data_limit_type=='i' and data_max_type=='i':
+                        self.tw.setItem(n_step+1+i,1,QtGui.QTableWidgetItem("OFF"))
+                        self.tw.setItem(n_step+1+i,2,QtGui.QTableWidgetItem("{:.4f}".format(data_max-(i+1)*data_step)))
+                    elif data_limit_type=='v' and data_max_type=='v':
+                        self.tw.setItem(n_step+1+i,1,QtGui.QTableWidgetItem("{:.4f}".format(data_max-(i+1)*data_step)))
+                        self.tw.setItem(n_step+1+ii,2,QtGui.QTableWidgetItem("0.0000"))                    
         elif self.combo.currentText()=='稳定性测试':
             for i in range(2*n_step+1):
                 self.tw.setItem(i,0,QtGui.QTableWidgetItem("{:.3f}".format(i*time_step)))
                 if i%2==0:
-                    self.tw.setItem(i,1,QtGui.QTableWidgetItem("{:.4f}".format(data_limit)))
+                    if data_limit_type=='i':
+                        self.tw.setItem(i,1,QtGui.QTableWidgetItem("OFF"))
+                        self.tw.setItem(i,2,QtGui.QTableWidgetItem("{:.4f}".format(data_limit)))
+                    elif data_limit_type=='v':
+                        self.tw.setItem(i,1,QtGui.QTableWidgetItem("{:.4f}".format(data_limit)))
+                        self.tw.setItem(i,2,QtGui.QTableWidgetItem("0.0000"))
                 else:
-                    self.tw.setItem(i,1,QtGui.QTableWidgetItem("{:.4f}".format(data_max)))
+                    if data_max_type=='i':
+                        self.tw.setItem(i,1,QtGui.QTableWidgetItem("OFF"))
+                        self.tw.setItem(i,2,QtGui.QTableWidgetItem("{:.4f}".format(data_max)))
+                    elif data_max_type=='v':
+                        self.tw.setItem(i,1,QtGui.QTableWidgetItem("{:.4f}".format(data_max)))
+                        self.tw.setItem(i,2,QtGui.QTableWidgetItem("0.0000"))
         elif self.combo.currentText()=='对照测试':
             for i in range(2*n_step):
                 self.tw.setItem(i,0,QtGui.QTableWidgetItem("{:.3f}".format(i*time_step)))
-                if i%2==0:
-                    self.tw.setItem(i,1,QtGui.QTableWidgetItem("{:.4f}".format(data_limit)))
-                else:
-                    self.tw.setItem(i,1,QtGui.QTableWidgetItem("{:.4f}".format(data_limit+(i+1)/2*data_step)))
+                if data_limit_type=='v' and data_max_type=='i':
+                    if i%2==0:
+                        self.tw.setItem(i,1,QtGui.QTableWidgetItem("{:.4f}".format(data_limit)))
+                        self.tw.setItem(i,2,QtGui.QTableWidgetItem("0.0000"))
+                    else:
+                        self.tw.setItem(i,1,QtGui.QTableWidgetItem("OFF"))
+                        self.tw.setItem(i,2,QtGui.QTableWidgetItem("{:.4f}".format(current_limit+(i+1)/2*current_step)))
+                elif data_limit_type=='i' and data_max_type=='v':
+                    if i%2==0:
+                        self.tw.setItem(i,1,QtGui.QTableWidgetItem("OFF"))
+                        self.tw.setItem(i,2,QtGui.QTableWidgetItem("{:.4f}".format(data_limit)))
+                    else:
+                        self.tw.setItem(i,1,QtGui.QTableWidgetItem("{:.4f}".format(voltage_limit+(i+1)/2*voltage_step)))
+                        self.tw.setItem(i,2,QtGui.QTableWidgetItem("0.0000"))
+                elif data_limit_type=='i' and data_max_type=='i':
+                    if i%2==0:
+                        self.tw.setItem(i,1,QtGui.QTableWidgetItem("OFF"))
+                        self.tw.setItem(i,2,QtGui.QTableWidgetItem("{:.4f}".format(data_limit)))
+                    else:
+                        self.tw.setItem(i,1,QtGui.QTableWidgetItem("OFF"))
+                        self.tw.setItem(i,2,QtGui.QTableWidgetItem("{:.4f}".format(data_limit+(i+1)/2*data_step)))
+                elif data_limit_type=='v' and data_max_type=='v':
+                    if i%2==0:
+                        self.tw.setItem(i,1,QtGui.QTableWidgetItem("{:.4f}".format(data_limit)))
+                        self.tw.setItem(i,2,QtGui.QTableWidgetItem("0.0000"))
+                    else:
+                        self.tw.setItem(i,1,QtGui.QTableWidgetItem("{:.4f}".format(data_limit+(i+1)/2*data_step)))
+                        self.tw.setItem(i,2,QtGui.QTableWidgetItem("0.0000"))
             if self.cb.isChecked():
                 for i in range(2*n_step):
                     self.tw.setItem(2*n_step+i,0,QtGui.QTableWidgetItem("{:.3f}".format(2*n_step*time_step+i*time_step)))
-                    if i%2==0:
-                        self.tw.setItem(2*n_step+i,1,QtGui.QTableWidgetItem("{:.4f}".format(data_max-(i+2)/2*data_step)))
-                    else:
-                        self.tw.setItem(2*n_step+i,1,QtGui.QTableWidgetItem("{:.4f}".format(data_max)))
+                    if data_limit_type=='i' and data_max_type=='v':
+                        if i%2==1:
+                            self.tw.setItem(2*n_step+i,1,QtGui.QTableWidgetItem("{:.4f}".format(data_max)))
+                            self.tw.setItem(2*n_step+i,2,QtGui.QTableWidgetItem("0.0000"))
+                        else:
+                            self.tw.setItem(2*n_step+i,1,QtGui.QTableWidgetItem("OFF"))
+                            self.tw.setItem(2*n_step+i,2,QtGui.QTableWidgetItem("{:.4f}".format(current_max-(i+1)/2*current_step)))
+                    elif data_limit_type=='v' and data_max_type=='i':
+                        if i%2==1:
+                            self.tw.setItem(2*n_step+i,1,QtGui.QTableWidgetItem("OFF"))
+                            self.tw.setItem(2*n_step+i,2,QtGui.QTableWidgetItem("{:.4f}".format(data_max)))
+                        else:
+                            self.tw.setItem(2*n_step+ii,1,QtGui.QTableWidgetItem("{:.4f}".format(voltage_max-(i+1)/2*voltage_step)))
+                            self.tw.setItem(2*n_step+i,2,QtGui.QTableWidgetItem("0.0000"))
+                    elif data_limit_type=='i' and data_max_type=='i':
+                        if i%2==1:
+                            self.tw.setItem(2*n_step+i,1,QtGui.QTableWidgetItem("OFF"))
+                            self.tw.setItem(2*n_step+i,2,QtGui.QTableWidgetItem("{:.4f}".format(data_max)))
+                        else:
+                            self.tw.setItem(2*n_step+i,1,QtGui.QTableWidgetItem("OFF"))
+                            self.tw.setItem(2*n_step+i,2,QtGui.QTableWidgetItem("{:.4f}".format(data_max-(i+2)/2*data_step)))
+                    elif data_limit_type=='v' and data_max_type=='v':
+                        if i%2==1:
+                            self.tw.setItem(2*n_step+i,1,QtGui.QTableWidgetItem("{:.4f}".format(data_max)))
+                            self.tw.setItem(2*n_step+i,2,QtGui.QTableWidgetItem("0.0000"))
+                        else:
+                            self.tw.setItem(2*n_step+i,1,QtGui.QTableWidgetItem("{:.4f}".format(data_max-(i+2)/2*data_step)))
+                            self.tw.setItem(2*n_step+i,2,QtGui.QTableWidgetItem("0.0000"))
 app = QtGui.QApplication(sys.argv)
 w=SSOFC()
 w.setWindowState(QtCore.Qt.WindowMaximized)
@@ -591,31 +725,31 @@ layout.addWidget(p_tvi, 4, 3, 3, 1)
 data_voltage=np.empty(0)
 data_voltage_psw=np.empty(0)
 p_voltage.showGrid(x=True,y=True)
-p_voltage.setLabel(axis='left',text='''<font face='微软雅黑' size=6>电压 (V)</font>''',color="#00FF00")
-p_voltage.setLabel(axis='bottom',text='''<font face='微软雅黑' size=6>时间 (s)</font>''',color="#FFFF00")
+p_voltage.setLabel(axis='left',text='''<font face='微软雅黑' size=6>电压 U (V)</font>''',color="#00FF00")
+p_voltage.setLabel(axis='bottom',text='''<font face='微软雅黑' size=6>时间 t (s)</font>''',color="#FFFF00")
 p_voltage.setTitle('''<font color=red face='微软雅黑' size=6>电压</font>''')
 curve_voltage=p_voltage.plot(pen='#00FF00')
 
 data_current=np.empty(0)
 data_current_psw=np.empty(0)
 p_current.showGrid(x=True,y=True)
-p_current.setLabel(axis='left',text='''<font face='微软雅黑' size=6>电流 (A)</font>''',color="#00FF00")
-p_current.setLabel(axis='bottom',text='''<font face='微软雅黑' size=6>时间 (s)</font>''',color="#FFFF00")
+p_current.setLabel(axis='left',text='''<font face='微软雅黑' size=6>电流 I (A)</font>''',color="#00FF00")
+p_current.setLabel(axis='bottom',text='''<font face='微软雅黑' size=6>时间 t (s)</font>''',color="#FFFF00")
 p_current.setTitle('''<font color=red face='微软雅黑' size=6>电流</font>''')
 curve_current=p_current.plot(pen='#00FF00')
 
 data_power=np.empty(0)
 data_hydrogen=np.empty(0)
 p_power.showGrid(x=True,y=True)
-p_power.setLabel(axis='left',text='''<font face='微软雅黑' size=6>功率 (W)</font>''',color="#00FF00")
-p_power.setLabel(axis='bottom',text='''<font face='微软雅黑' size=6>时间 (s)</font>''',color="#FFFF00")
+p_power.setLabel(axis='left',text='''<font face='微软雅黑' size=6>功率 P (W)</font>''',color="#00FF00")
+p_power.setLabel(axis='bottom',text='''<font face='微软雅黑' size=6>时间 t (s)</font>''',color="#FFFF00")
 p_power.setTitle('''<font color=red face='微软雅黑' size=6>功率</font>''')
 curve_power=p_power.plot(pen='#00FF00')
 
 p_iv=pg.PlotItem()
 p_iv.showGrid(x=True,y=True)
-p_iv.setLabel(axis='left',text='''<font face='微软雅黑' size=6>电压 (V)</font>''',color="#00FF00")
-p_iv.setLabel(axis='bottom',text='''<font face='微软雅黑' size=6>电流 (A)</font>''',color="#FFFF00")
+p_iv.setLabel(axis='left',text='''<font face='微软雅黑' size=6>电压 U (V)</font>''',color="#00FF00")
+p_iv.setLabel(axis='bottom',text='''<font face='微软雅黑' size=6>电流 I (A)</font>''',color="#FFFF00")
 # p_iv.setTitle('''<font color=red face='微软雅黑' size=6>IVP曲线</font>''')
 curve_iv=p_iv.plot(pen='#00FF00')
 a_power = pg.AxisItem("right")
@@ -632,7 +766,7 @@ a_power.linkToView(v_power)
 v_voltage = p_iv.vb
 v_power.setXLink(v_voltage)
 # p_iv.getAxis("left").setLabel('电流', color='#FFFFFF')
-a_power.setLabel(axis='right',text='''<font face='微软雅黑' size=6>功率 (W)</font>''',color="#FF0000")
+a_power.setLabel(axis='right',text='''<font face='微软雅黑' size=6>功率 P (W)</font>''',color="#FF0000")
 # v_power.setTitle('''<font color=red face='微软雅黑' size=6></font>''')
 v_power.setGeometry(v_voltage.sceneBoundingRect())
 # v_voltage.addItem(pg.PlotCurveItem(x, y1, pen='#FFFFFF'))
@@ -644,8 +778,8 @@ v_power.addItem(curve_ip)
 
 p_tv=pg.PlotItem()
 p_tv.showGrid(x=True,y=True)
-p_tv.setLabel(axis='left',text='''<font face='微软雅黑' size=6>电压 (V)</font>''',color="#00FF00")
-p_tv.setLabel(axis='bottom',text='''<font face='微软雅黑' size=6>时间 (s)</font>''',color="#FFFF00")
+p_tv.setLabel(axis='left',text='''<font face='微软雅黑' size=6>电压 U (V)</font>''',color="#00FF00")
+p_tv.setLabel(axis='bottom',text='''<font face='微软雅黑' size=6>时间 t (s)</font>''',color="#FFFF00")
 # p_iv.setTitle('''<font color=red face='微软雅黑' size=6>IVP曲线</font>''')
 curve_tv=p_tv.plot(pen='#00FF00')
 a_ti = pg.AxisItem("right")
@@ -660,7 +794,7 @@ l_tvi.scene().addItem(v_ti)
 a_ti.linkToView(v_ti)
 v_tv = p_tv.vb
 v_ti.setXLink(v_tv)
-a_ti.setLabel(axis='right',text='''<font face='微软雅黑' size=6>电流 (A)</font>''',color="#FF0000")
+a_ti.setLabel(axis='right',text='''<font face='微软雅黑' size=6>电流 I (A)</font>''',color="#FF0000")
 v_ti.setGeometry(v_voltage.sceneBoundingRect())
 curve_ti=pg.PlotCurveItem(pen='#FF0000')
 v_ti.addItem(curve_ti)
@@ -693,6 +827,7 @@ def serialProcess():
             voltage,current,power = 0,0,0
             mode=""
             hydrogen=0
+            # voltage = pws_read_voltage(paintVCP.psw)
             if paintVCP.isFcMode:
                 voltage,current,power=read_vcp()
                 mode="FC"
@@ -732,13 +867,17 @@ def serialProcess():
             curve_current.setData(data_current,x=times)
 
             if paintVCP.isFcMode:
+                # p_power.setLabel(axis='left',text='''<font face='微软雅黑' size=6>功率 P (W)</font>''')
+                # p_power.setTitle('''<font color=red face='微软雅黑' size=6>功率</font>''')
                 data_power=np.append(data_power,power)
                 data_hydrogen=np.append(data_hydrogen,0)
                 p_power.setRange(xRange=[0,times[-1]],yRange=[min(data_power)*0.95-0.01,max(data_power)*1.05],padding=0)
                 curve_power.setData(data_power,x=times)
             else:
+                # p_power.setLabel(axis='left',text='''<font face='微软雅黑' size=6>产氢率 (NL/h)</font>''')
+                # p_power.setTitle('''<font color=red face='微软雅黑' size=6>产氢率</font>''')
                 data_power=np.append(data_power,0)
-                hydrogen=abs(current/26.801/2.*23.8*20)
+                hydrogen=current/26.801/2.*23.8*20
                 data_hydrogen=np.append(data_hydrogen,hydrogen)
                 p_power.setRange(xRange=[0,times[-1]],yRange=[min(data_hydrogen),max(data_hydrogen)],padding=0)
                 curve_power.setData(data_hydrogen,x=times)
@@ -749,7 +888,6 @@ def serialProcess():
             # print(times[-1])
             time_step = 1./max(rate,1)
             time.sleep(time_step)
-       
 portx="COM6"
 bps=9600
 # timex=5
@@ -765,3 +903,4 @@ th1.start()
 # timer.start(500) # 多少ms调用一次
 sys.exit(app.exec_())
 
+            
